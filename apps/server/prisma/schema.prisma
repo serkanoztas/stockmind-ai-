@@ -1,0 +1,257 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+enum MovementType {
+  RECEIVING
+  DEDUCTION
+  ADJUSTMENT
+  RETURN
+}
+
+enum OrderStatus {
+  DRAFT
+  APPROVED
+  CANCELLED
+  FULFILLED
+}
+
+enum RecommendationStatus {
+  PENDING
+  APPROVED
+  DISMISSED
+}
+
+model User {
+  id           String           @id @default(uuid())
+  email        String           @unique
+  passwordHash String
+  fullName     String
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  memberships  BusinessMember[]
+
+  @@map("users")
+}
+
+model Business {
+  id                 String               @id @default(uuid())
+  name               String
+  taxId              String?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  members            BusinessMember[]
+  categories         Category[]
+  suppliers          Supplier[]
+  products           Product[]
+  inventoryMovements InventoryMovement[]
+  sales              Sale[]
+  purchaseOrders     PurchaseOrder[]
+  aiRecommendations  AiRecommendation[]
+  notifications      Notification[]
+
+  @@map("businesses")
+}
+
+model BusinessMember {
+  id         String   @id @default(uuid())
+  userId     String
+  businessId String
+  role       Role     @default(OWNER)
+  createdAt  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, businessId])
+  @@map("business_members")
+}
+
+model Category {
+  id         String    @id @default(uuid())
+  businessId String
+  name       String
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  products   Product[]
+
+  @@unique([businessId, name])
+  @@map("categories")
+}
+
+model Supplier {
+  id               String          @id @default(uuid())
+  businessId       String
+  name             String
+  contactName      String?
+  email            String?
+  phone            String?
+  typicalLeadDays  Int             @default(3)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  business         Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  products         Product[]
+  purchaseOrders   PurchaseOrder[]
+
+  @@map("suppliers")
+}
+
+model Product {
+  id                   String               @id @default(uuid())
+  businessId           String
+  categoryId           String?
+  supplierId           String?
+  name                 String
+  description          String?
+  sku                  String
+  barcode              String?
+  purchasePrice        Decimal              @db.Decimal(12, 2)
+  sellingPrice         Decimal              @db.Decimal(12, 2)
+  currentStock         Int                  @default(0)
+  minStockThreshold    Int                  @default(5)
+  isActive             Boolean              @default(true)
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+
+  business             Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  category             Category?            @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  supplier             Supplier?            @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  batches              StockBatch[]
+  inventoryMovements   InventoryMovement[]
+  saleItems            SaleItem[]
+  purchaseOrderItems   PurchaseOrderItem[]
+
+  @@unique([businessId, sku])
+  @@index([businessId, isActive])
+  @@map("products")
+}
+
+model StockBatch {
+  id                 String              @id @default(uuid())
+  productId          String
+  batchNumber        String
+  quantity           Int
+  expirationDate     DateTime?
+  receivedAt         DateTime            @default(now())
+
+  product            Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  inventoryMovements InventoryMovement[]
+  saleItems          SaleItem[]
+
+  @@map("stock_batches")
+}
+
+model InventoryMovement {
+  id           String       @id @default(uuid())
+  businessId   String
+  productId    String
+  batchId      String?
+  type         MovementType
+  quantity     Int
+  reason       String?
+  createdAt    DateTime     @default(now())
+
+  business     Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  batch        StockBatch?  @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, createdAt])
+  @@map("inventory_movements")
+}
+
+model Sale {
+  id          String     @id @default(uuid())
+  businessId  String
+  totalAmount Decimal    @db.Decimal(12, 2)
+  createdAt   DateTime   @default(now())
+
+  business    Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  items       SaleItem[]
+
+  @@index([businessId, createdAt])
+  @@map("sales")
+}
+
+model SaleItem {
+  id          String      @id @default(uuid())
+  saleId      String
+  productId   String
+  batchId     String?
+  quantity    Int
+  unitPrice   Decimal     @db.Decimal(12, 2)
+  totalPrice  Decimal     @db.Decimal(12, 2)
+
+  sale        Sale        @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product     Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  batch       StockBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  @@map("sale_items")
+}
+
+model PurchaseOrder {
+  id            String              @id @default(uuid())
+  businessId    String
+  supplierId    String
+  status        OrderStatus         @default(DRAFT)
+  totalCost     Decimal             @db.Decimal(12, 2)
+  rationale     String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  business      Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  supplier      Supplier            @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  items         PurchaseOrderItem[]
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id              String        @id @default(uuid())
+  purchaseOrderId String
+  productId       String
+  quantity        Int
+  unitPrice       Decimal       @db.Decimal(12, 2)
+
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  product         Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@map("purchase_order_items")
+}
+
+model AiRecommendation {
+  id           String               @id @default(uuid())
+  businessId   String
+  summary      String
+  payload      Json
+  status       RecommendationStatus @default(PENDING)
+  createdAt    DateTime             @default(now())
+
+  business     Business             @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@map("ai_recommendations")
+}
+
+model Notification {
+  id         String   @id @default(uuid())
+  businessId String
+  title      String
+  message    String
+  isRead     Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
